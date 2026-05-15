@@ -1,0 +1,18 @@
+[wokwi]
+version = 1
+elf = "pitstop/build/esp32.esp32.esp32doit-devkit-v1/pitstop.ino.elf"
+firmware = "pitstop/build/esp32.esp32.esp32doit-devkit-v1/pitstop.ino.bin"
+
+# WiFi Configuration
+[[wifi]]
+ssid = "Wokwi-GUEST"
+password = ""
+internet = true
+channel = 6    # Set WiFi channel to 6 for faster connection
+
+[net]
+enable = true
+
+[[chip]]
+name = "gps-neo6m"
+binary = "gps-neo6m.chip.wasm"
