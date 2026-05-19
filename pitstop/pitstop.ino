@@ -8,11 +8,14 @@
 // ====================== CONFIG ======================
 #define WIFI_SSID     "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
-#define API_BASE_URL  "http://10.233.139.162:8000"
+#define API_BASE_URL  "http://host.wokwi.internal:8000"  // Wokwi -> host; no ESP32 real use o IP da máquina
 #define PAGER_ID      "PAGER-001"
 
 // Polling a cada 1 minuto
 #define POLL_INTERVAL 60000
+
+// Postar localização periodicamente (mesmo sem mudar status)
+#define LOCATION_INTERVAL 120000  // 2 minutos
 
 // ====================== DISPLAY ======================
 #define SCREEN_WIDTH 128
@@ -50,6 +53,7 @@ String apiStatus = "OFF";
 int telaAtual = 0;
 unsigned long lastPoll = 0;
 unsigned long lastDisplayRefresh = 0;
+unsigned long lastLocationPost = 0;
 
 // Botão
 bool lastButtonState = HIGH;
@@ -65,7 +69,7 @@ struct BuzzerState {
 // ====================== FUNÇÕES ======================
 void connectWiFi();
 void pollStatus();
-void postLocation();
+bool postLocation();
 void updateDisplay();
 void setStatusVisual(String status);
 void startBeep(int times);
@@ -76,7 +80,12 @@ void gpsLoop();
 // ====================== SETUP ======================
 void setup() {
   Serial.begin(115200);
+  delay(200);
 
+  Serial.println("BOOT ESP32 OK");
+  Serial.print("Sketch: ");
+  Serial.println(__FILE__);
+  
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
@@ -92,6 +101,9 @@ void setup() {
 
   connectWiFi();
   updateDisplay();
+
+  // Faz um GET logo no começo (pra preencher a tela)
+  pollStatus();
 }
 
 // ====================== LOOP ======================
@@ -108,6 +120,12 @@ void loop() {
     pollStatus();
   }
 
+  // POST de localização periódico (independente de mudar status)
+  if (now - lastLocationPost >= LOCATION_INTERVAL) {
+    lastLocationPost = now;
+    postLocation();
+  }
+
   // refresh leve do display (1s)
   if (now - lastDisplayRefresh >= 1000) {
     lastDisplayRefresh = now;
@@ -117,7 +135,7 @@ void loop() {
 
 // ====================== WIFI ======================
 void connectWiFi() {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 6);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long start = millis();
 
   while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
@@ -125,6 +143,8 @@ void connectWiFi() {
   }
 
   wifiStatus = (WiFi.status() == WL_CONNECTED) ? "OK" : "OFF";
+  Serial.print("WiFi: ");
+  Serial.println(wifiStatus);
 }
 
 // ====================== API ======================
@@ -132,7 +152,7 @@ void pollStatus() {
   if (WiFi.status() != WL_CONNECTED) {
     wifiStatus = "OFF";
     connectWiFi();
-    return;
+    if (WiFi.status() != WL_CONNECTED) return;
   }
 
   String url = String(API_BASE_URL) + "/pager/" + PAGER_ID;
@@ -141,39 +161,33 @@ void pollStatus() {
   http.begin(url);
   int httpCode = http.GET();
 
-  Serial.print("GET: "); Serial.println(url);
-  Serial.print("HTTP: "); Serial.println(httpCode);
-  if (httpCode > 0) {
-    Serial.println(http.getString());
-  }
+  Serial.print("GET: ");
+  Serial.println(url);
+  Serial.print("HTTP(GET): ");
+  Serial.println(httpCode);
 
   if (httpCode == 200) {
     apiStatus = "OK";
     String payload = http.getString();
+    Serial.println(payload);
 
-    DynamicJsonDocument doc(1024);
-    deserializeJson(doc, payload);
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+      Serial.print("JSON err: ");
+      Serial.println(err.c_str());
+      http.end();
+      return;
+    }
 
     String novoStatus = doc["status"] | statusAtual;
 
-    carPlate   = doc["car_plate"] | "---";
-    carModel   = doc["car_model"] | "---";
-    ownerName  = doc["owner_name"] | "---";
-    serviceDesc= doc["service_desc"] | "---";
-
-    if (novoStatus != statusAtual) {
-      statusAtual = novoStatus;
-      setStatusVisual(statusAtual);
-
-      // buzzer
-      if (statusAtual == "aguardando") startBeep(1);
-      else if (statusAtual == "diagnostico") startBeep(2);
-      else if (statusAtual == "manutencao") startBeep(2);
-      else if (statusAtual == "aprovacao") startBeep(4);
-      else if (statusAtual == "pronto") startBeep(3);
-
-      postLocation();
-    }
+    // Atualiza SEM depender de mudança de status (assim a tela sempre preenche)
+    statusAtual  = novoStatus;
+    carPlate     = doc["car_plate"] | "---";
+    carModel     = doc["car_model"] | "---";
+    ownerName    = doc["owner_name"] | "---";
+    serviceDesc  = doc["service_desc"] | "---";
 
   } else {
     apiStatus = "OFF";
@@ -182,14 +196,37 @@ void pollStatus() {
   http.end();
 }
 
-void postLocation() {
-  if (!gps.location.isValid()) return;
+bool postLocation() {
+  Serial.println("postLocation() chamado");
+
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiStatus = "OFF";
+    connectWiFi();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("Sem WiFi, nao vai postar");
+      return false;
+    }
+  }
+
+  // Sem GPS válido = não posta
+  if (!gps.location.isValid()) {
+    Serial.println("GPS INVALIDO - nao vai postar");
+    return false;
+  }
+
+  double lat = gps.location.lat();
+  double lng = gps.location.lng();
+
+  Serial.print("GPS OK lat=");
+  Serial.print(lat, 6);
+  Serial.print(" lng=");
+  Serial.println(lng, 6);
 
   String url = String(API_BASE_URL) + "/pager/" + PAGER_ID + "/location";
 
   DynamicJsonDocument doc(128);
-  doc["lat"] = gps.location.lat();
-  doc["lng"] = gps.location.lng();
+  doc["lat"] = lat;
+  doc["lng"] = lng;
 
   String body;
   serializeJson(doc, body);
@@ -197,8 +234,22 @@ void postLocation() {
   HTTPClient http;
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
-  http.POST(body);
+
+  int code = http.POST(body);
+
+  Serial.print("POST: ");
+  Serial.println(url);
+  Serial.print("Body: ");
+  Serial.println(body);
+  Serial.print("HTTP(POST): ");
+  Serial.println(code);
+
+  if (code > 0) {
+    Serial.println(http.getString());
+  }
+
   http.end();
+  return (code == 200 || code == 201);
 }
 
 // ====================== DISPLAY ======================
@@ -273,11 +324,8 @@ void buzzerLoop() {
     buzzer.lastToggle = now;
     buzzer.toneOn = !buzzer.toneOn;
 
-    if (buzzer.toneOn) {
-      tone(BUZZER_PIN, 1000);
-    } else {
-      noTone(BUZZER_PIN);
-    }
+    if (buzzer.toneOn) tone(BUZZER_PIN, 1000);
+    else noTone(BUZZER_PIN);
 
     buzzer.remaining--;
     if (buzzer.remaining <= 0) {
@@ -302,7 +350,6 @@ void buttonLoop() {
       lastButtonTime = now;
     }
   }
-
   lastButtonState = state;
 }
 
