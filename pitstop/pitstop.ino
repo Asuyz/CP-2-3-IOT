@@ -189,6 +189,9 @@ void pollStatus() {
     ownerName    = doc["owner_name"] | "---";
     serviceDesc  = doc["service_desc"] | "---";
 
+    // Atualiza LED com o novo status
+    setStatusVisual(statusAtual);
+
   } else {
     apiStatus = "OFF";
   }
