@@ -86,9 +86,11 @@ void setup() {
   Serial.print("Sketch: ");
   Serial.println(__FILE__);
   
-  pinMode(LED_R, OUTPUT);
-  pinMode(LED_G, OUTPUT);
-  pinMode(LED_B, OUTPUT);
+  // Configurar LEDC para LED RGB (mais eficiente que analogWrite)
+  ledcAttach(LED_R, 5000, 8);  // Pin, Freq, Resolution
+  ledcAttach(LED_G, 5000, 8);
+  ledcAttach(LED_B, 5000, 8);
+  
   pinMode(BUZZER_PIN, OUTPUT);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -183,14 +185,16 @@ void pollStatus() {
     String novoStatus = doc["status"] | statusAtual;
 
     // Atualiza SEM depender de mudança de status (assim a tela sempre preenche)
-    statusAtual  = novoStatus;
     carPlate     = doc["car_plate"] | "---";
     carModel     = doc["car_model"] | "---";
     ownerName    = doc["owner_name"] | "---";
     serviceDesc  = doc["service_desc"] | "---";
 
-    // Atualiza LED com o novo status
-    setStatusVisual(statusAtual);
+    // Atualiza LED e status APENAS se mudou
+    if (novoStatus != statusAtual) {
+      statusAtual = novoStatus;
+      setStatusVisual(statusAtual);
+    }
 
   } else {
     apiStatus = "OFF";
@@ -306,9 +310,9 @@ void setStatusVisual(String status) {
   else if (status == "aprovacao") { r=255; g=0; b=0; }
   else if (status == "pronto") { r=0; g=255; b=0; }
 
-  analogWrite(LED_R, r);
-  analogWrite(LED_G, g);
-  analogWrite(LED_B, b);
+  ledcWrite(LED_R, r);
+  ledcWrite(LED_G, g);
+  ledcWrite(LED_B, b);
 }
 
 // ====================== BUZZER (sem delay) ======================
