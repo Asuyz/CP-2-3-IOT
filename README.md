@@ -154,6 +154,7 @@ curl -X POST http://localhost:8000/pager \
 - [RuralGiovane](https://github.com/RuralGiovane)
 - [roque-arantes](https://github.com/roque-arantes)
 - [orlando-IDA](https://github.com/orlando-IDA)
+- [Gabriel Lourenço Martins](https://github.com/ggabmartins)
 
 ---
 
